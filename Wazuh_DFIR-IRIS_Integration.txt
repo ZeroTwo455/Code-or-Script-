@@ -1,0 +1,161 @@
+/var/ossec/integrations/custom-iris
+
+custom-iris (content):
+
+#!/var/ossec/framework/python/bin/python3
+# custom-iris
+# Custom Wazuh integration script to send alerts to DFIR-IRIS
+
+import sys
+import json
+import requests
+import logging
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(filename='/var/ossec/logs/integrations.log', level=logging.INFO, 
+                    format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+# Function to create a formatted string from alert details
+def format_alert_details(alert_json):
+    rule = alert_json.get("rule", {})
+    agent = alert_json.get("agent", {})
+    
+    # 1. Mandatory Data Input (Header)
+    details = [
+        f"Rule ID: {rule.get('id', 'N/A')}",
+        f"Rule Level: {rule.get('level', 'N/A')}",
+        f"Rule Description: {rule.get('description', 'N/A')}",
+        f"Agent ID: {agent.get('id', 'N/A')}",
+        f"Agent Name: {agent.get('name', 'N/A')}",
+    ]
+
+    # 2. Logic "Smart": Check are there MITRE data?
+    if "mitre" in rule:
+        mitre = rule.get("mitre", {})
+        
+        # Check ID (Txxxx)
+        if "id" in mitre and mitre["id"]:
+            mitre_ids = ', '.join(mitre["id"])
+            details.append(f"MITRE IDs: {mitre_ids}")
+            
+        # Check Tactic
+        if "tactic" in mitre and mitre["tactic"]:
+            mitre_tactics = ', '.join(mitre["tactic"])
+            details.append(f"MITRE Tactics: {mitre_tactics}")
+            
+        # Check Technique
+        if "technique" in mitre and mitre["technique"]:
+            mitre_techniques = ', '.join(mitre["technique"])
+            details.append(f"MITRE Techniques: {mitre_techniques}")
+
+    # IoC Extraction (Malware Hash) ---
+    syscheck = alert_json.get("syscheck", {})
+    if "sha256_after" in syscheck:
+        details.append(f"File Hash (SHA256): {syscheck['sha256_after']}")
+    elif "md5_after" in syscheck:
+        details.append(f"File Hash (MD5): {syscheck['md5_after']}")
+        
+    # If the log comes from Sysmon Windows
+    sysmon_data = alert_json.get("data", {}).get("win", {}).get("eventdata", {})
+    if "hashes" in sysmon_data:
+        details.append(f"Sysmon Hashes: {sysmon_data['hashes']}")
+    # ------------------------------------------------
+
+    # 3. Additional Data Input (Footer)
+    details.append(f"Location: {alert_json.get('location', 'N/A')}")
+    details.append(f"Full Log: {alert_json.get('full_log', 'N/A')}")
+
+    return '\n'.join(details)
+
+def main():
+    # Read parameters when integration is run
+    if len(sys.argv) < 4:
+        logging.error("Insufficient arguments provided. Exiting.")
+        sys.exit(1)
+    
+    alert_file = sys.argv[1]
+    api_key = sys.argv[2]
+    hook_url = sys.argv[3]
+
+    # Read the alert file
+    try:
+        with open(alert_file) as f:
+            alert_json = json.load(f)
+    except Exception as e:
+        logging.error(f"Failed to read alert file: {e}")
+        sys.exit(1)
+
+    # Prepare alert details
+    alert_details = format_alert_details(alert_json)
+
+    # Convert Wazuh rule levels(0-15) -> IRIS severity(1-6)
+    alert_level = alert_json.get("rule", {}).get("level", 0)
+    if alert_level < 5:
+        severity = 2
+    elif alert_level >= 5 and alert_level < 7:
+        severity = 3
+    elif alert_level >= 7 and alert_level < 10:
+        severity = 4
+    elif alert_level >= 10 and alert_level < 13:
+        severity = 5
+    elif alert_level >= 13:
+        severity = 6
+    else:
+        severity = 1
+
+    # --- MODIFICATION: Dynamic Tagging & Deep Linking ---
+    rule_id_str = str(alert_json.get("rule", {}).get("id", ""))
+    agent_name = alert_json.get("agent", {}).get("name", "N/A")
+    agent_id = alert_json.get("agent", {}).get("id", "000")
+    
+    # Basic tags
+    dynamic_tag = f"wazuh,{agent_name}"
+    
+    # Adding specific tags based on Rule ID
+    if rule_id_str == "87105":
+        dynamic_tag += ",virustotal"
+    elif rule_id_str == "100622":
+        dynamic_tag += ",misp"
+    elif rule_id_str in ["100092", "100094"]:
+        dynamic_tag += ",active-response,mitigation"
+
+    # Deep link directly to Agent profile page on Wazuh
+    source_link = f"https://YOUR_WAZUH MANAGER_IP/app/threat-hunting#/overview/?tab=general&tabView=events&agentId={agent_id}"
+    # --------------------------------------------------
+
+    # Generate request
+    payload = json.dumps({
+        "alert_title": alert_json.get("rule", {}).get("description", "No Description"),
+        "alert_description": alert_details,
+        "alert_source": "Wazuh",
+        "alert_source_ref": alert_json.get("id", "Unknown ID"),
+        "alert_source_link": source_link,
+        "alert_severity_id": severity,
+        "alert_status_id": 2,  # 'New' status
+        "alert_source_event_time": alert_json.get("timestamp", "Unknown Timestamp"),
+        "alert_note": "",
+        "alert_tags": dynamic_tag,
+        "alert_customer_id": 1,  # '1' for default 'IrisInitialClient'
+        "alert_source_content": alert_json  # raw log
+    })
+
+    # Send request to IRIS
+    try:
+        response = requests.post(hook_url, data=payload, headers={"Authorization": "Bearer " + api_key, "content-type": "application/json"}, verify=False)
+        if response.status_code in [200, 201, 202, 204]:
+            logging.info(f"Sent alert to IRIS. Response status code: {response.status_code}")
+        else:
+            logging.error(f"Failed to send alert to IRIS. Response status code: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Failed to send alert to IRIS: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+
+chmod 750 /var/ossec/integrations/custom-iris
+
+chown root:wazuh /var/ossec/integrations/custom-iris
+
+* That code was modified, which's source: https://wazuh.com/blog/enhancing-incident-response-with-wazuh-and-dfir-iris-integration/?highlight=DFIR-IRIS%20Integration

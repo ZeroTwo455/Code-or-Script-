@@ -1,0 +1,33 @@
+/var/ossec/etc/rules/local_rules.xml
+
+local_rules.xml (content):
+
+<group name="active_response,">
+
+  <rule id="100092" level="12">
+    <if_sid>657</if_sid>
+    <match>Successfully removed threat</match>
+    <field name="parameters.alert.rule.id">^87105$</field>
+    
+    <description>Active Response: Removed threat located at $(parameters.alert.data.virustotal.source.file)</description>
+    <group>virustotal_ar,</group>
+  </rule>
+
+
+  <rule id="100094" level="12">
+    <if_sid>657</if_sid>
+    <match>Successfully removed threat</match>
+    <field name="parameters.alert.rule.id">^100622$</field>
+    
+    <description>Active Response: Removed threat located at $(parameters.alert.data.syscheck.path)</description>
+    <group>misp_ar,</group>
+  </rule>
+
+
+  <rule id="100093" level="12">
+    <if_sid>657</if_sid>
+    <match>Error removing threat</match>
+    <description>Active Response: Error removing threat.</description>
+  </rule>
+
+</group>

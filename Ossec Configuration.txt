@@ -1,0 +1,49 @@
+/var/ossec/etc/ossec.conf
+
+ossec.conf (content for Integrations and Active Response):
+
+</ossec_config>
+
+... 
+
+<integration>
+  <name>virustotal</name>
+  <api_key>YOUR_VIRUSTOTAL_API_KEY</api_key>
+  <group>syscheck</group>
+  <alert_format>json</alert_format>
+</integration>
+
+<command>
+  <name>remove-threat</name>
+  <executable>remove-threat.exe</executable>
+  <timeout_allowed>no</timeout_allowed>
+</command>
+
+<active-response>
+  <disabled>no</disabled>
+  <command>remove-threat</command>
+  <location>local</location>
+  <rules_id>87105</rules_id>
+</active-response>
+
+<active-response>
+  <command>remove-threat</command>
+  <location>local</location>
+  <rules_id>100622</rules_id>
+</active-response>
+
+<integration>
+  <name>custom-misp</name>
+  <group>sysmon_event1,sysmon_event3,sysmon_event6,sysmon_event_15,sysmon_event_22,syscheck</group>
+  <alert_format>json</alert_format>
+</integration>
+
+<integration>
+  <name>custom-iris</name>
+  <hook_url>https://YOUR_DFIR-IRIS_IP/alerts/add</hook_url>
+  <rule_id>87105,100622,100092,100094</rule_id>
+  <api_key>YOUR_DFIR-IRIS_API_KEY</api_key>
+  <alert_format>json</alert_format>
+</integration>
+
+</ossec_config>
